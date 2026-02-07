@@ -1,0 +1,68 @@
+//@version=5
+strategy("ICT Displacement + FVG Auto Trend/Reversal (MES)", overlay=true, calc_on_every_tick=true)
+
+// ===== SESSION =====
+nySession = not na(time(timeframe.period, "0930-1600", "America/New_York"))
+
+// ===== PREVIOUS DAY RANGE =====
+pdHigh = request.security(syminfo.tickerid, "D", high[1])
+pdLow = request.security(syminfo.tickerid, "D", low[1])
+pdMid = (pdHigh + pdLow) / 2
+
+// ===== SESSION RANGE =====
+var float sessHigh = na
+var float sessLow = na
+sessHigh := nySession ? (na(sessHigh) ? high : math.max(sessHigh, high)) : na
+sessLow := nySession ? (na(sessLow) ? low : math.min(sessLow, low)) : na
+sessMid = (sessHigh + sessLow) / 2
+
+// ===== TREND DAY =====
+trendDay = nySession and (close > pdHigh or close < pdLow)
+
+// ===== PREMIUM / DISCOUNT AUTO =====
+inDiscount = trendDay ? close < sessMid : close < pdMid
+inPremium = trendDay ? close > sessMid : close > pdMid
+
+// ===== DISPLACEMENT =====
+bullDisp = close > high[1] and (close - open) > (high[1] - low[1]) * 0.6
+bearDisp = close < low[1] and (open - close) > (high[1] - low[1]) * 0.6
+
+// ===== FVG CREATION =====
+bullFVG = bullDisp and low > high[2]
+bearFVG = bearDisp and high < low[2]
+
+// ===== STORE LAST FVG =====
+var float bullFvgHigh = na
+var float bullFvgLow = na
+var float bearFvgHigh = na
+var float bearFvgLow = na
+
+bullFvgHigh := bullFVG ? low : bullFvgHigh
+bullFvgLow := bullFVG ? high[2] : bullFvgLow
+bearFvgHigh := bearFVG ? low[2] : bearFvgHigh
+bearFvgLow := bearFVG ? high : bearFvgLow
+
+// ===== FVG TAP =====
+bullTap = not na(bullFvgHigh) and low <= bullFvgHigh and low >= bullFvgLow
+bearTap = not na(bearFvgLow) and high >= bearFvgLow and high <= bearFvgHigh
+
+// ===== ENTRY CONDITIONS =====
+longCondition = nySession and bullTap and inDiscount
+shortCondition = nySession and bearTap and inPremium
+
+// ===== EXECUTION =====
+if longCondition and strategy.position_size <= 0
+    strategy.entry("ICT Long", strategy.long)
+
+if shortCondition and strategy.position_size >= 0
+    strategy.entry("ICT Short", strategy.short)
+
+// ===== ALERTS =====
+alertcondition(longCondition, "ICT LONG", "ICT LONG: FVG tap in Discount")
+alertcondition(shortCondition, "ICT SHORT", "ICT SHORT: FVG tap in Premium")
+
+// ===== VISUALS =====
+plot(sessMid, "Session Mid", color=color.orange)
+plot(pdMid, "PD Mid", color=color.gray)
+plotshape(longCondition, style=shape.triangleup, location=location.belowbar, color=color.lime, size=size.small)
+plotshape(shortCondition, style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
