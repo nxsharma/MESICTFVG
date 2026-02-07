@@ -1,3 +1,4 @@
+//best so far for 1 minute
 //@version=5
 strategy("ICT Displacement + FVG Auto Trend/Reversal (MES)", overlay=true, initial_capital=10000, currency=currency.USD)
 
