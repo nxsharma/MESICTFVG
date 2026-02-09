@@ -1,0 +1,92 @@
+//@version=5
+strategy("ICT Displacement + FVG Auto Trend/Reversal (MES)", overlay=true, initial_capital=10000, currency=currency.USD)
+
+// ===== INPUTS =====
+useSilverBullet = input.bool(true, "Only Trade Silver Bullet Hour (10-11 AM)")
+maxTradesPerDay = input.int(1, "Max Trades Per Day")
+rrRatio         = input.float(1.5, "Risk:Reward Ratio")
+
+// ===== DAILY MIDPOINT CALCULATION =====
+pdHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
+pdLow  = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
+dailyMidpoint = (pdHigh + pdLow) / 2
+
+// ===== SESSION & DAILY LIMIT =====
+var int daily_trade_count = 0
+if ta.change(time("D"))
+    daily_trade_count := 0
+
+sessionRange = useSilverBullet ? "1000-1100" : "0930-1600"
+inSession = not na(time(timeframe.period, sessionRange, "America/New_York"))
+
+// ===== DISPLACEMENT & BIAS =====
+bodySize = math.abs(close - open)
+avgBody = ta.sma(bodySize, 20)
+isDisplaced = bodySize > avgBody * 2.0 
+
+var int marketBias = 0 
+var int lastDispBar = 0
+var float fvgHigh = na
+var float fvgLow = na
+
+if isDisplaced and inSession
+    marketBias := close > open ? 1 : -1
+    lastDispBar := bar_index
+    // Define FVG boundaries for the box
+    fvgHigh := marketBias == 1 ? low : low[2]
+    fvgLow  := marketBias == 1 ? high[2] : high
+    // Create visual FVG box
+    box.new(bar_index[2], fvgHigh, bar_index, fvgLow, 
+             bgcolor=marketBias == 1 ? color.new(color.lime, 85) : color.new(color.red, 85), 
+             border_color=na, extend=extend.right, xloc=xloc.bar_index)
+
+// ===== FVG DETECTION =====
+bullFVG = marketBias == 1 and low > high[2] and bar_index > lastDispBar
+bearFVG = marketBias == -1 and high < low[2] and bar_index > lastDispBar
+
+// ===== ENTRY CONDITIONS =====
+canEnter = inSession and daily_trade_count < maxTradesPerDay and strategy.position_size == 0 and bar_index > lastDispBar
+
+longCondition  = canEnter and bullFVG 
+shortCondition = canEnter and bearFVG 
+
+// ===== TP/SL LINE TRACKING =====
+var float tradeTP = na
+var float tradeSL = na
+
+// ===== EXECUTION =====
+if longCondition
+    tradeSL := low[2]
+    tradeTP := close + (math.abs(close - tradeSL) * rrRatio)
+    strategy.entry("ICT Long", strategy.long)
+    strategy.exit("Exit Long", "ICT Long", stop=tradeSL, limit=tradeTP)
+    daily_trade_count += 1
+    marketBias := 0 
+    alert("ICT LONG: High Prob Setup", alert.freq_once_per_bar)
+
+if shortCondition
+    tradeSL := high[2]
+    tradeTP := close - (math.abs(close - tradeSL) * rrRatio)
+    strategy.entry("ICT Short", strategy.short)
+    strategy.exit("Exit Short", "ICT Short", stop=tradeSL, limit=tradeTP)
+    daily_trade_count += 1
+    marketBias := 0 
+    alert("ICT SHORT: High Prob Setup", alert.freq_once_per_bar)
+
+// Reset trade levels when no position exists
+if strategy.position_size == 0
+    tradeTP := na
+    tradeSL := na
+
+// ===== VISUALS =====
+bgcolor(inSession ? color.new(color.blue, 98) : na)
+
+// Plot Daily Midpoint
+plot(dailyMidpoint, "Daily Midpoint", color=color.new(color.gray, 50), style=plot.style_stepline, linewidth=1)
+
+// Clearer TP/SL Lines (Plot only when active)
+plot(tradeTP, "Take Profit", color=color.new(color.lime, 0), style=plot.style_linebr, linewidth=3)
+plot(tradeSL, "Stop Loss", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=3)
+
+plotshape(longCondition, "Long", shape.labelup, location.belowbar, color.lime, size=size.small, text="BULLISH", textcolor=color.black)
+plotshape(shortCondition, "Short", shape.labeldown, location.abovebar, color.red, size=size.small, text="BEARISH", textcolor=color.white)
