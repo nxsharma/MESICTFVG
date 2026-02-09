@@ -1,4 +1,4 @@
-//ICT fvg 2/1min apple
+//ICT fvg 3/2/1min apple
 
 //@version=5
 strategy("ICT Displacement + FVG Auto Trend/Reversal (MES)", overlay=true, initial_capital=10000, currency=currency.USD)
