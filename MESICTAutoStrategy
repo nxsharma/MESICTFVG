@@ -1,10 +1,11 @@
 //@version=5
+//works well with 15 min spy, 3 min MES, aapl 3min
 strategy("ICT Displacement + FVG Auto Trend/Reversal (MES)", overlay=true, initial_capital=10000, currency=currency.USD)
 
 // ===== INPUTS =====
 useSilverBullet = input.bool(true, "Only Trade Silver Bullet Hour (10-11 AM)")
 maxTradesPerDay = input.int(1, "Max Trades Per Day")
-rrRatio         = input.float(2.0, "Risk:Reward Ratio")
+rrRatio         = input.float(1.5, "Risk:Reward Ratio")
 
 // ===== DAILY MIDPOINT CALCULATION =====
 pdHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
