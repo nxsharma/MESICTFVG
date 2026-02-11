@@ -1,5 +1,5 @@
 //@version=5
-//works best on 1 min MES
+//works best on 1 min MES, 1:2 or 1: 1.5
 strategy("ICT Displacement + FVG Auto Trend/Reversal (MES)", overlay=true, initial_capital=10000, currency=currency.USD)
 
 // ===== INPUTS =====
