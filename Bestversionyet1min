@@ -1,10 +1,23 @@
 //@version=5
+//works best on 1 min MES
 strategy("ICT Displacement + FVG Auto Trend/Reversal (MES)", overlay=true, initial_capital=10000, currency=currency.USD)
 
 // ===== INPUTS =====
 useSilverBullet = input.bool(true, "Only Trade Silver Bullet Hour (10-11 AM)")
 maxTradesPerDay = input.int(1, "Max Trades Per Day")
 rrRatio         = input.float(1.5, "Risk:Reward Ratio")
+
+// ===== BOX MANAGEMENT =====
+// Create an array to store box IDs so we can delete them later
+var box[] fvgBoxes = array.new_box()
+
+// ===== DAILY RESET LOGIC =====
+if ta.change(time("D"))
+    // Loop through the array and delete all boxes created on previous days
+    if array.size(fvgBoxes) > 0
+        for i = 0 to array.size(fvgBoxes) - 1
+            box.delete(array.get(fvgBoxes, i))
+        array.clear(fvgBoxes)
 
 // ===== DAILY MIDPOINT CALCULATION =====
 pdHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.lookahead_on)
@@ -32,13 +45,14 @@ var float fvgLow = na
 if isDisplaced and inSession
     marketBias := close > open ? 1 : -1
     lastDispBar := bar_index
-    // Define FVG boundaries for the box
     fvgHigh := marketBias == 1 ? low : low[2]
     fvgLow  := marketBias == 1 ? high[2] : high
-    // Create visual FVG box
-    box.new(bar_index[2], fvgHigh, bar_index, fvgLow, 
+    
+    // Create the box and store its ID in the array
+    fvgBox = box.new(bar_index[2], fvgHigh, bar_index, fvgLow, 
              bgcolor=marketBias == 1 ? color.new(color.lime, 85) : color.new(color.red, 85), 
              border_color=na, extend=extend.right, xloc=xloc.bar_index)
+    array.push(fvgBoxes, fvgBox)
 
 // ===== FVG DETECTION =====
 bullFVG = marketBias == 1 and low > high[2] and bar_index > lastDispBar
@@ -55,36 +69,26 @@ var float tradeTP = na
 var float tradeSL = na
 
 // ===== EXECUTION =====
+// ===== EXECUTION =====
 if longCondition
     tradeSL := low[2]
     tradeTP := close + (math.abs(close - tradeSL) * rrRatio)
-    strategy.entry("ICT Long", strategy.long)
-    strategy.exit("Exit Long", "ICT Long", stop=tradeSL, limit=tradeTP)
+    strategy.entry("ICT Long", strategy.long, alert_message="ICT LONG Entry at " + str.tostring(close) + " | SL: " + str.tostring(tradeSL) + " | TP: " + str.tostring(tradeTP))
+    strategy.exit("Exit Long", "ICT Long", stop=tradeSL, limit=tradeTP, alert_message="ICT LONG Closed at {{strategy.order.price}}")
     daily_trade_count += 1
     marketBias := 0 
-    alert("ICT LONG: High Prob Setup", alert.freq_once_per_bar)
 
 if shortCondition
     tradeSL := high[2]
     tradeTP := close - (math.abs(close - tradeSL) * rrRatio)
-    strategy.entry("ICT Short", strategy.short)
-    strategy.exit("Exit Short", "ICT Short", stop=tradeSL, limit=tradeTP)
+    strategy.entry("ICT Short", strategy.short, alert_message="ICT SHORT Entry at " + str.tostring(close) + " | SL: " + str.tostring(tradeSL) + " | TP: " + str.tostring(tradeTP))
+    strategy.exit("Exit Short", "ICT Short", stop=tradeSL, limit=tradeTP, alert_message="ICT SHORT Closed at {{strategy.order.price}}")
     daily_trade_count += 1
-    marketBias := 0 
-    alert("ICT SHORT: High Prob Setup", alert.freq_once_per_bar)
-
-// Reset trade levels when no position exists
-if strategy.position_size == 0
-    tradeTP := na
-    tradeSL := na
+    marketBias := 0
 
 // ===== VISUALS =====
 bgcolor(inSession ? color.new(color.blue, 98) : na)
-
-// Plot Daily Midpoint
 plot(dailyMidpoint, "Daily Midpoint", color=color.new(color.gray, 50), style=plot.style_stepline, linewidth=1)
-
-// Clearer TP/SL Lines (Plot only when active)
 plot(tradeTP, "Take Profit", color=color.new(color.lime, 0), style=plot.style_linebr, linewidth=3)
 plot(tradeSL, "Stop Loss", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=3)
 
