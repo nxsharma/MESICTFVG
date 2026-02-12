@@ -1,19 +1,26 @@
 //@version=5
-//works best on 1 min MES, 1:2 or 1: 1.5
+//works best on 1 min MES
+//works on 5 min with no silver Bullet
+//apple 1 hr
+//works on CL 1 min 2 min 1:1 ratio with no silver bullet
+//works on 2m MES with no silver bullet
 strategy("ICT Displacement + FVG Auto Trend/Reversal (MES)", overlay=true, initial_capital=10000, currency=currency.USD)
 
 // ===== INPUTS =====
 useSilverBullet = input.bool(true, "Only Trade Silver Bullet Hour (10-11 AM)")
-maxTradesPerDay = input.int(1, "Max Trades Per Day")
+limitTrades     = input.bool(true, "Limit Trades Per Day?", group="Trade Management")
+maxTradesPerDay = input.int(1, "Max Trades Per Day", minval=1, group="Trade Management")
 rrRatio         = input.float(1.5, "Risk:Reward Ratio")
+dispMult        = input.float(2.0, "Displacement Multiplier", minval=1.0, step=0.1, tooltip="How much larger than average body size must the candle be?")
+
+// NEW TOGGLE
+useHODBreak     = input.bool(true, "Require High of Day Break for Longs?", group="Entry Filters")
 
 // ===== BOX MANAGEMENT =====
-// Create an array to store box IDs so we can delete them later
 var box[] fvgBoxes = array.new_box()
 
 // ===== DAILY RESET LOGIC =====
 if ta.change(time("D"))
-    // Loop through the array and delete all boxes created on previous days
     if array.size(fvgBoxes) > 0
         for i = 0 to array.size(fvgBoxes) - 1
             box.delete(array.get(fvgBoxes, i))
@@ -24,6 +31,18 @@ pdHigh = request.security(syminfo.tickerid, "D", high[1], lookahead=barmerge.loo
 pdLow  = request.security(syminfo.tickerid, "D", low[1], lookahead=barmerge.lookahead_on)
 dailyMidpoint = (pdHigh + pdLow) / 2
 
+// ===== TRACKING HIGH OF THE DAY (HOD) =====
+var float hod = na
+var bool hodBroken = false
+
+if ta.change(time("D"))
+    hod := high
+    hodBroken := false
+else
+    if not hodBroken and high > hod[1]
+        hodBroken := true
+    hod := math.max(high, nz(hod[1], high))
+
 // ===== SESSION & DAILY LIMIT =====
 var int daily_trade_count = 0
 if ta.change(time("D"))
@@ -32,10 +51,12 @@ if ta.change(time("D"))
 sessionRange = useSilverBullet ? "1000-1100" : "0930-1600"
 inSession = not na(time(timeframe.period, sessionRange, "America/New_York"))
 
+canTradeToday = limitTrades ? daily_trade_count < maxTradesPerDay : true
+
 // ===== DISPLACEMENT & BIAS =====
 bodySize = math.abs(close - open)
 avgBody = ta.sma(bodySize, 20)
-isDisplaced = bodySize > avgBody * 2.0 
+isDisplaced = bodySize > avgBody * dispMult 
 
 var int marketBias = 0 
 var int lastDispBar = 0
@@ -48,10 +69,9 @@ if isDisplaced and inSession
     fvgHigh := marketBias == 1 ? low : low[2]
     fvgLow  := marketBias == 1 ? high[2] : high
     
-    // Create the box and store its ID in the array
     fvgBox = box.new(bar_index[2], fvgHigh, bar_index, fvgLow, 
-             bgcolor=marketBias == 1 ? color.new(color.lime, 85) : color.new(color.red, 85), 
-             border_color=na, extend=extend.right, xloc=xloc.bar_index)
+              bgcolor=marketBias == 1 ? color.new(color.lime, 85) : color.new(color.red, 85), 
+              border_color=na, extend=extend.right, xloc=xloc.bar_index)
     array.push(fvgBoxes, fvgBox)
 
 // ===== FVG DETECTION =====
@@ -59,38 +79,61 @@ bullFVG = marketBias == 1 and low > high[2] and bar_index > lastDispBar
 bearFVG = marketBias == -1 and high < low[2] and bar_index > lastDispBar
 
 // ===== ENTRY CONDITIONS =====
-canEnter = inSession and daily_trade_count < maxTradesPerDay and strategy.position_size == 0 and bar_index > lastDispBar
+hodConditionMet = useHODBreak ? hodBroken : true
+canEnter = inSession and canTradeToday and strategy.position_size == 0 and bar_index > lastDispBar
 
-longCondition  = canEnter and bullFVG 
+longCondition  = canEnter and bullFVG and hodConditionMet
 shortCondition = canEnter and bearFVG 
 
-// ===== TP/SL LINE TRACKING =====
+// ===== TP/SL PERSISTENCE LOGIC =====
 var float tradeTP = na
 var float tradeSL = na
+var line tpLine = na
+var line slLine = na
 
-// ===== EXECUTION =====
+// Clean up lines if they exist when a new trade starts or position closes
+if (longCondition or shortCondition or (ta.change(strategy.position_size) and strategy.position_size == 0))
+    line.delete(tpLine)
+    line.delete(slLine)
+    tradeTP := na
+    tradeSL := na
+
 // ===== EXECUTION =====
 if longCondition
     tradeSL := low[2]
     tradeTP := close + (math.abs(close - tradeSL) * rrRatio)
-    strategy.entry("ICT Long", strategy.long, alert_message="ICT LONG Entry at " + str.tostring(close) + " | SL: " + str.tostring(tradeSL) + " | TP: " + str.tostring(tradeTP))
-    strategy.exit("Exit Long", "ICT Long", stop=tradeSL, limit=tradeTP, alert_message="ICT LONG Closed at {{strategy.order.price}}")
+    strategy.entry("ICT Long", strategy.long)
+    strategy.exit("Exit Long", "ICT Long", stop=tradeSL, limit=tradeTP)
+    
+    // Create Visual Lines starting at entry bar
+    tpLine := line.new(bar_index, tradeTP, bar_index, tradeTP, color=color.lime, width=3, style=line.style_solid)
+    slLine := line.new(bar_index, tradeSL, bar_index, tradeSL, color=color.red, width=3, style=line.style_solid)
+    
     daily_trade_count += 1
     marketBias := 0 
 
 if shortCondition
     tradeSL := high[2]
     tradeTP := close - (math.abs(close - tradeSL) * rrRatio)
-    strategy.entry("ICT Short", strategy.short, alert_message="ICT SHORT Entry at " + str.tostring(close) + " | SL: " + str.tostring(tradeSL) + " | TP: " + str.tostring(tradeTP))
-    strategy.exit("Exit Short", "ICT Short", stop=tradeSL, limit=tradeTP, alert_message="ICT SHORT Closed at {{strategy.order.price}}")
+    strategy.entry("ICT Short", strategy.short)
+    strategy.exit("Exit Short", "ICT Short", stop=tradeSL, limit=tradeTP)
+    
+    // Create Visual Lines starting at entry bar
+    tpLine := line.new(bar_index, tradeTP, bar_index, tradeTP, color=color.lime, width=3, style=line.style_solid)
+    slLine := line.new(bar_index, tradeSL, bar_index, tradeSL, color=color.red, width=3, style=line.style_solid)
+    
     daily_trade_count += 1
     marketBias := 0
+
+// Extend the lines to the current bar while the trade is active
+if strategy.position_size != 0
+    line.set_x2(tpLine, bar_index)
+    line.set_x2(slLine, bar_index)
 
 // ===== VISUALS =====
 bgcolor(inSession ? color.new(color.blue, 98) : na)
 plot(dailyMidpoint, "Daily Midpoint", color=color.new(color.gray, 50), style=plot.style_stepline, linewidth=1)
-plot(tradeTP, "Take Profit", color=color.new(color.lime, 0), style=plot.style_linebr, linewidth=3)
-plot(tradeSL, "Stop Loss", color=color.new(color.red, 0), style=plot.style_linebr, linewidth=3)
+plot(useHODBreak ? hod : na, "High of Day", color=hodBroken ? color.new(color.orange, 70) : color.new(color.orange, 20), style=plot.style_stepline)
 
 plotshape(longCondition, "Long", shape.labelup, location.belowbar, color.lime, size=size.small, text="BULLISH", textcolor=color.black)
 plotshape(shortCondition, "Short", shape.labeldown, location.abovebar, color.red, size=size.small, text="BEARISH", textcolor=color.white)
